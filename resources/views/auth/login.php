@@ -29,7 +29,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header("Location: ../teacher/dashboard.php");
         }
         exit();
-
     } else {
         $_SESSION['error'] = "Invalid username or password!";
         header("Location: login.php");

@@ -40,7 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
         }
     }
 }
-
 // Fetch all users (using prepared statement)
 $result = $conn->query("SELECT id, username, email, created_at FROM users ORDER BY created_at DESC");
 ?>

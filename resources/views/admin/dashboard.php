@@ -26,7 +26,6 @@ foreach ($possiblePaths as $path) {
         break;
     }
 }
-
 if (!$dbFound) {
     die("Database configuration file not found. Please check the file path.");
 }
