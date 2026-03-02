@@ -1,40 +1,40 @@
 <?php
-// Enable error reporting for debugging (remove in production)
+// Enable error reporting (dev only)
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
 session_start();
 
 // -----------------------
-// FIXED DATABASE CONNECTION PATH
+// DATABASE CONNECTION
 // -----------------------
-// Try multiple possible paths to find database.php
-$possiblePaths = [
-    __DIR__ . '../../../config/database.php',           // For views/dashboard/index.php
-    __DIR__ . '/../../config/database.php',               // For dashboard/index.php
-    __DIR__ . '/../config/database.php',                  // Alternative
-    $_SERVER['DOCUMENT_ROOT'] . '/config/database.php',   // From document root
-    $_SERVER['DOCUMENT_ROOT'] . '/quiz-system/config/database.php', // With project folder
-    __DIR__ . '../../../../config/database.php',        // Original path (kept for compatibility)
-];
-
-$dbFound = false;
-foreach ($possiblePaths as $path) {
-    if (file_exists($path)) {
-        require_once $path;
-        $dbFound = true;
-        break;
-    }
-}
-if (!$dbFound) {
-    die("Database configuration file not found. Please check the file path.");
-}
+require_once __DIR__ . '../../../../config/database.php'; // Adjust if dashboard is in dashboard/
 
 // -----------------------
 // LOGOUT HANDLING
 // -----------------------
 if (isset($_GET['logout'])) {
+    // Unset all session variables
+    $_SESSION = [];
+
+    // Destroy the session cookie if exists
+    if (ini_get("session.use_cookies")) {
+        $params = session_get_cookie_params();
+        setcookie(
+            session_name(),
+            '',
+            time() - 42000,
+            $params["path"],
+            $params["domain"],
+            $params["secure"],
+            $params["httponly"]
+        );
+    }
+
+    // Destroy the session
     session_destroy();
+
+    // Redirect to login page
     header('Location: login.php');
     exit();
 }
@@ -48,7 +48,7 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $userId = $_SESSION['user_id'];
-$userRole = $_SESSION['role'] ?? 'teacher'; // Default to teacher if not set
+$userRole = $_SESSION['role'] ?? 'teacher';
 $username = $_SESSION['username'] ?? 'User';
 
 // -----------------------
@@ -57,107 +57,107 @@ $username = $_SESSION['username'] ?? 'User';
 $dashboardTitle = $userRole === 'admin' ? 'Admin Dashboard' : 'Teacher Dashboard';
 
 // -----------------------
-// FETCH DASHBOARD STATISTICS
+// FETCH DASHBOARD STATS
 // -----------------------
 try {
     if ($userRole === 'admin') {
-        // Admin stats
-        $stmt = $pdo->query("SELECT COUNT(*) as total FROM users");
-        $totalUsers = $stmt->fetch()['total'];
-        
-        $stmt = $pdo->query("SELECT COUNT(*) as total FROM quizzes");
-        $totalQuizzes = $stmt->fetch()['total'];
-        
-        $stmt = $pdo->query("SELECT COUNT(*) as total FROM quizzes WHERE status = 'draft'");
-        $pendingReviews = $stmt->fetch()['total'];
-        
-        $stmt = $pdo->query("SELECT COUNT(*) as total FROM departments");
-        $totalDepartments = $stmt->fetch()['total'];
-        
-        // User growth (last 30 days)
-        $stmt = $pdo->query("SELECT COUNT(*) as total FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)");
-        $newUsers = $stmt->fetch()['total'];
-        
-        // Recent quizzes
-        $stmt = $pdo->query("SELECT q.*, u.username as creator_name FROM quizzes q JOIN users u ON q.creator_id = u.id ORDER BY q.created_at DESC LIMIT 6");
-        $recentQuizzes = $stmt->fetchAll();
-        
-        // Department distribution
-        $stmt = $pdo->query("SELECT d.name, COUNT(u.id) as user_count FROM departments d LEFT JOIN users u ON d.id = u.department_id GROUP BY d.id");
-        $departmentStats = $stmt->fetchAll();
-        
+        // Admin Stats
+        $totalUsers = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
+        $totalQuizzes = $pdo->query("SELECT COUNT(*) FROM quizzes")->fetchColumn();
+        $pendingReviews = $pdo->query("SELECT COUNT(*) FROM quizzes WHERE status='draft'")->fetchColumn();
+        $totalDepartments = $pdo->query("SELECT COUNT(*) FROM departments")->fetchColumn();
+
+        $newUsers = $pdo->query("SELECT COUNT(*) FROM users WHERE created_at >= NOW() - INTERVAL '30 days'")->fetchColumn();
+
+        $recentQuizzes = $pdo->query("
+            SELECT q.*, u.username AS creator_name 
+            FROM quizzes q 
+            JOIN users u ON q.creator_id = u.id 
+            ORDER BY q.created_at DESC 
+            LIMIT 6
+        ")->fetchAll(PDO::FETCH_ASSOC);
+
+        $departmentStats = $pdo->query("
+            SELECT d.name, COUNT(u.id) AS user_count 
+            FROM departments d 
+            LEFT JOIN users u ON d.id = u.department_id 
+            GROUP BY d.id
+        ")->fetchAll(PDO::FETCH_ASSOC);
+
     } else {
-        // Teacher stats
-        $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM quizzes WHERE creator_id = ?");
-        $stmt->execute([$userId]);
-        $myQuizzes = $stmt->fetch()['total'];
-        
-        $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM attempts a JOIN quizzes q ON a.quiz_id = q.id WHERE q.creator_id = ?");
-        $stmt->execute([$userId]);
-        $totalAttempts = $stmt->fetch()['total'];
-        
-        $stmt = $pdo->prepare("SELECT COALESCE(AVG(score), 0) as avg FROM attempts a JOIN quizzes q ON a.quiz_id = q.id WHERE q.creator_id = ?");
-        $stmt->execute([$userId]);
-        $avgScore = round($stmt->fetch()['avg'], 1);
-        
-        $stmt = $pdo->prepare("SELECT COUNT(*) as total FROM quizzes WHERE creator_id = ? AND status = 'draft'");
-        $stmt->execute([$userId]);
-        $draftQuizzes = $stmt->fetch()['total'];
-        
-        // Weekly activity
-        $stmt = $pdo->prepare("
-            SELECT 
-                COUNT(DISTINCT q.id) as new_quizzes,
-                COUNT(DISTINCT a.id) as new_attempts
-            FROM quizzes q
-            LEFT JOIN attempts a ON q.id = a.quiz_id
-            WHERE q.creator_id = ? AND q.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-        ");
-        $stmt->execute([$userId]);
-        $weeklyActivity = $stmt->fetch();
-        
-        // Recent quiz attempts
-        $stmt = $pdo->prepare("
-            SELECT a.*, q.title as quiz_title, u.username as student_name 
+        // Teacher Stats
+        $myQuizzes = $pdo->prepare("SELECT COUNT(*) FROM quizzes WHERE creator_id = ?");
+        $myQuizzes->execute([$userId]);
+        $myQuizzes = $myQuizzes->fetchColumn();
+
+        $totalAttempts = $pdo->prepare("
+            SELECT COUNT(*) 
             FROM attempts a 
             JOIN quizzes q ON a.quiz_id = q.id 
-            JOIN users u ON a.user_id = u.id 
-            WHERE q.creator_id = ? 
-            ORDER BY a.created_at DESC 
-            LIMIT 10
+            WHERE q.creator_id = ?
         ");
-        $stmt->execute([$userId]);
-        $recentAttempts = $stmt->fetchAll();
-        
-        // Quiz performance stats
-        $stmt = $pdo->prepare("
+        $totalAttempts->execute([$userId]);
+        $totalAttempts = $totalAttempts->fetchColumn();
+
+        $avgScore = $pdo->prepare("
+            SELECT COALESCE(AVG(score),0) FROM attempts a
+            JOIN quizzes q ON a.quiz_id = q.id 
+            WHERE q.creator_id = ?
+        ");
+        $avgScore->execute([$userId]);
+        $avgScore = round($avgScore->fetchColumn(),1);
+
+        $draftQuizzes = $pdo->prepare("SELECT COUNT(*) FROM quizzes WHERE creator_id=? AND status='draft'");
+        $draftQuizzes->execute([$userId]);
+        $draftQuizzes = $draftQuizzes->fetchColumn();
+
+        // Weekly Activity
+        $weeklyActivity = $pdo->prepare("
             SELECT 
-                q.id,
-                q.title,
-                COUNT(DISTINCT a.id) as attempt_count,
-                COALESCE(AVG(a.score), 0) as avg_score
+                COUNT(DISTINCT q.id) AS new_quizzes,
+                COUNT(DISTINCT a.id) AS new_attempts
             FROM quizzes q
             LEFT JOIN attempts a ON q.id = a.quiz_id
+            WHERE q.creator_id=? AND q.created_at >= NOW() - INTERVAL '7 days'
+        ");
+        $weeklyActivity->execute([$userId]);
+        $weeklyActivity = $weeklyActivity->fetch(PDO::FETCH_ASSOC);
+
+        // Recent Attempts
+        $recentAttempts = $pdo->prepare("
+            SELECT a.*, q.title AS quiz_title, u.username AS student_name
+            FROM attempts a
+            JOIN quizzes q ON a.quiz_id = q.id
+            JOIN users u ON a.user_id = u.id
             WHERE q.creator_id = ?
+            ORDER BY a.created_at DESC
+            LIMIT 10
+        ");
+        $recentAttempts->execute([$userId]);
+        $recentAttempts = $recentAttempts->fetchAll(PDO::FETCH_ASSOC);
+
+        // Top Quizzes
+        $topQuizzes = $pdo->prepare("
+            SELECT q.id, q.title, COUNT(a.id) AS attempt_count, COALESCE(AVG(a.score),0) AS avg_score
+            FROM quizzes q
+            LEFT JOIN attempts a ON q.id = a.quiz_id
+            WHERE q.creator_id=?
             GROUP BY q.id
             ORDER BY attempt_count DESC
             LIMIT 5
         ");
-        $stmt->execute([$userId]);
-        $topQuizzes = $stmt->fetchAll();
-        
+        $topQuizzes->execute([$userId]);
+        $topQuizzes = $topQuizzes->fetchAll(PDO::FETCH_ASSOC);
     }
-    
 } catch (Exception $e) {
     error_log("Dashboard stats fetch failed: " . $e->getMessage());
-    // Set default values to avoid undefined variable errors
-    if ($userRole === 'admin') {
-        $totalUsers = $totalQuizzes = $pendingReviews = $totalDepartments = $newUsers = 0;
-        $recentQuizzes = $departmentStats = [];
+    if ($userRole==='admin'){
+        $totalUsers=$totalQuizzes=$pendingReviews=$totalDepartments=$newUsers=0;
+        $recentQuizzes=$departmentStats=[];
     } else {
-        $myQuizzes = $totalAttempts = $avgScore = $draftQuizzes = 0;
-        $weeklyActivity = ['new_quizzes' => 0, 'new_attempts' => 0];
-        $recentAttempts = $topQuizzes = [];
+        $myQuizzes=$totalAttempts=$avgScore=$draftQuizzes=0;
+        $weeklyActivity=['new_quizzes'=>0,'new_attempts'=>0];
+        $recentAttempts=$topQuizzes=[];
     }
 }
 
@@ -165,33 +165,31 @@ try {
 // FETCH NOTIFICATIONS
 // -----------------------
 try {
-    if ($userRole === 'admin') {
-        $stmt = $pdo->query("
-            (SELECT 'quiz_review' as type, CONCAT('New quiz \"', title, '\" needs review') as message, created_at 
-             FROM quizzes WHERE status = 'draft' ORDER BY created_at DESC LIMIT 3)
-            UNION
-            (SELECT 'new_user' as type, CONCAT('New user registered: ', username) as message, created_at 
+    if ($userRole==='admin') {
+        $notifications = $pdo->query("
+            (SELECT 'quiz_review' AS type, 'New quiz \"' || title || '\" needs review' AS message, created_at 
+             FROM quizzes WHERE status='draft' ORDER BY created_at DESC LIMIT 3)
+            UNION ALL
+            (SELECT 'new_user' AS type, 'New user registered: ' || username AS message, created_at
              FROM users ORDER BY created_at DESC LIMIT 3)
             ORDER BY created_at DESC LIMIT 5
-        ");
-        $notifications = $stmt->fetchAll();
+        ")->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $stmt = $pdo->prepare("
-            (SELECT 'attempt' as type, CONCAT(u.username, ' completed \"', q.title, '\"') as message, a.created_at 
+            (SELECT 'attempt' AS type, u.username || ' completed \"' || q.title || '\"' AS message, a.created_at
              FROM attempts a
              JOIN users u ON a.user_id = u.id
              JOIN quizzes q ON a.quiz_id = q.id
              WHERE q.creator_id = ?
              ORDER BY a.created_at DESC LIMIT 3)
-            UNION
-            (SELECT 'draft' as type, CONCAT('Quiz \"', title, '\" is still in draft') as message, updated_at 
-             FROM quizzes 
-             WHERE creator_id = ? AND status = 'draft'
+            UNION ALL
+            (SELECT 'draft' AS type, 'Quiz \"' || title || '\" is still in draft' AS message, updated_at
+             FROM quizzes WHERE creator_id=? AND status='draft'
              ORDER BY updated_at DESC LIMIT 2)
             ORDER BY created_at DESC LIMIT 5
         ");
-        $stmt->execute([$userId, $userId]);
-        $notifications = $stmt->fetchAll();
+        $stmt->execute([$userId,$userId]);
+        $notifications = $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 } catch (Exception $e) {
     $notifications = [];
@@ -647,7 +645,7 @@ try {
         <i class="fas fa-cog"></i> Settings
     </a>
     
-    <a href="?logout=1" class="nav-link logout">
+    <a href="../auth/login.php" class="nav-link logout">
         <i class="fas fa-sign-out-alt"></i> Logout
     </a>
 </div>
