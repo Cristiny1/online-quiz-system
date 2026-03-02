@@ -1,6 +1,35 @@
 <?php
+// Enable error reporting for debugging (remove in production)
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 session_start();
-require_once __DIR__ . '../../../../config/database.php';
+
+// -----------------------
+// FIXED DATABASE CONNECTION PATH
+// -----------------------
+// Try multiple possible paths to find database.php
+$possiblePaths = [
+    __DIR__ . '../../../config/database.php',           // For views/dashboard/index.php
+    __DIR__ . '/../../config/database.php',               // For dashboard/index.php
+    __DIR__ . '/../config/database.php',                  // Alternative
+    $_SERVER['DOCUMENT_ROOT'] . '/config/database.php',   // From document root
+    $_SERVER['DOCUMENT_ROOT'] . '/quiz-system/config/database.php', // With project folder
+    __DIR__ . '../../../../config/database.php',        // Original path (kept for compatibility)
+];
+
+$dbFound = false;
+foreach ($possiblePaths as $path) {
+    if (file_exists($path)) {
+        require_once $path;
+        $dbFound = true;
+        break;
+    }
+}
+
+if (!$dbFound) {
+    die("Database configuration file not found. Please check the file path.");
+}
 
 // -----------------------
 // LOGOUT HANDLING
@@ -20,13 +49,13 @@ if (!isset($_SESSION['user_id'])) {
 }
 
 $userId = $_SESSION['user_id'];
-$userRole = $_SESSION['role'] == 'admin' ? 'admin' : 'teacher';
-$username = $_SESSION['username'] ?? ucfirst($userRole);
+$userRole = $_SESSION['role'] ?? 'teacher'; // Default to teacher if not set
+$username = $_SESSION['username'] ?? 'User';
 
 // -----------------------
 // PAGE TITLE
 // -----------------------
-$dashboardTitle = $userRole === 'admin' ? 'Admin Panel' : 'Teacher Dashboard';
+$dashboardTitle = $userRole === 'admin' ? 'Admin Dashboard' : 'Teacher Dashboard';
 
 // -----------------------
 // FETCH DASHBOARD STATISTICS
@@ -76,6 +105,18 @@ try {
         $stmt->execute([$userId]);
         $draftQuizzes = $stmt->fetch()['total'];
         
+        // Weekly activity
+        $stmt = $pdo->prepare("
+            SELECT 
+                COUNT(DISTINCT q.id) as new_quizzes,
+                COUNT(DISTINCT a.id) as new_attempts
+            FROM quizzes q
+            LEFT JOIN attempts a ON q.id = a.quiz_id
+            WHERE q.creator_id = ? AND q.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+        ");
+        $stmt->execute([$userId]);
+        $weeklyActivity = $stmt->fetch();
+        
         // Recent quiz attempts
         $stmt = $pdo->prepare("
             SELECT a.*, q.title as quiz_title, u.username as student_name 
@@ -95,11 +136,9 @@ try {
                 q.id,
                 q.title,
                 COUNT(DISTINCT a.id) as attempt_count,
-                COALESCE(AVG(a.score), 0) as avg_score,
-                COUNT(DISTINCT q2.id) as question_count
+                COALESCE(AVG(a.score), 0) as avg_score
             FROM quizzes q
             LEFT JOIN attempts a ON q.id = a.quiz_id
-            LEFT JOIN questions q2 ON q.id = q2.quiz_id
             WHERE q.creator_id = ?
             GROUP BY q.id
             ORDER BY attempt_count DESC
@@ -108,21 +147,19 @@ try {
         $stmt->execute([$userId]);
         $topQuizzes = $stmt->fetchAll();
         
-        // Weekly activity
-        $stmt = $pdo->prepare("
-            SELECT 
-                COUNT(DISTINCT q.id) as new_quizzes,
-                COUNT(DISTINCT a.id) as new_attempts
-            FROM quizzes q
-            LEFT JOIN attempts a ON q.id = a.quiz_id
-            WHERE q.creator_id = ? AND q.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
-        ");
-        $stmt->execute([$userId]);
-        $weeklyActivity = $stmt->fetch();
     }
     
 } catch (Exception $e) {
     error_log("Dashboard stats fetch failed: " . $e->getMessage());
+    // Set default values to avoid undefined variable errors
+    if ($userRole === 'admin') {
+        $totalUsers = $totalQuizzes = $pendingReviews = $totalDepartments = $newUsers = 0;
+        $recentQuizzes = $departmentStats = [];
+    } else {
+        $myQuizzes = $totalAttempts = $avgScore = $draftQuizzes = 0;
+        $weeklyActivity = ['new_quizzes' => 0, 'new_attempts' => 0];
+        $recentAttempts = $topQuizzes = [];
+    }
 }
 
 // -----------------------
@@ -138,6 +175,7 @@ try {
              FROM users ORDER BY created_at DESC LIMIT 3)
             ORDER BY created_at DESC LIMIT 5
         ");
+        $notifications = $stmt->fetchAll();
     } else {
         $stmt = $pdo->prepare("
             (SELECT 'attempt' as type, CONCAT(u.username, ' completed \"', q.title, '\"') as message, a.created_at 
@@ -154,8 +192,8 @@ try {
             ORDER BY created_at DESC LIMIT 5
         ");
         $stmt->execute([$userId, $userId]);
+        $notifications = $stmt->fetchAll();
     }
-    $notifications = $stmt->fetchAll();
 } catch (Exception $e) {
     $notifications = [];
 }
@@ -166,7 +204,7 @@ try {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= $dashboardTitle ?> - Dashboard</title>
+    <title><?= htmlspecialchars($dashboardTitle) ?> - Dashboard</title>
 
     <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
@@ -175,10 +213,397 @@ try {
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <!-- Custom Dashboard CSS -->
-    <link rel="stylesheet" href="../../css/dashboard.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
 
-    <!-- Chart.js for beautiful charts -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        body {
+            background: #f4f6f9;
+            overflow-x: hidden;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            height: 100vh;
+            width: 280px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            position: fixed;
+            left: 0;
+            top: 0;
+            color: white;
+            transition: 0.3s;
+            z-index: 1000;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+
+        .sidebar-header {
+            padding: 25px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .sidebar-header h4 {
+            margin: 0;
+            font-weight: 600;
+            font-size: 1.5rem;
+        }
+
+        .sidebar-header small {
+            opacity: 0.8;
+            font-size: 0.9rem;
+        }
+
+        .nav-link {
+            color: rgba(255,255,255,0.9);
+            padding: 15px 25px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            transition: 0.3s;
+            border-left: 4px solid transparent;
+        }
+
+        .nav-link i {
+            width: 25px;
+            font-size: 1.2rem;
+        }
+
+        .nav-link:hover, .nav-link.active {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border-left-color: #fff;
+        }
+
+        .nav-link.logout {
+            margin-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .nav-link.logout:hover {
+            background: rgba(255,0,0,0.2);
+        }
+
+        /* Main Content */
+        .main-content {
+            margin-left: 280px;
+            padding: 20px 30px;
+            transition: 0.3s;
+        }
+
+        /* Top Navbar */
+        .top-navbar {
+            display: none;
+            background: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+            border-radius: 10px;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .menu-btn {
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #667eea;
+        }
+
+        /* Welcome Card */
+        .welcome-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+            animation: slideIn 0.5s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Stats Cards */
+        .stat-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+            transition: 0.3s;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .stat-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            font-size: 1.8rem;
+        }
+
+        .stat-icon.primary { background: #e8f0fe; color: #4361ee; }
+        .stat-icon.success { background: #e3fcef; color: #2ecc71; }
+        .stat-icon.warning { background: #fff3e0; color: #f39c12; }
+        .stat-icon.info { background: #e1f5fe; color: #00acc1; }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #7f8c8d;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-trend {
+            margin-top: 15px;
+            font-size: 0.9rem;
+            padding: 5px 10px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        .stat-trend.up { background: #e3fcef; color: #2ecc71; }
+        .stat-trend.down { background: #fee; color: #e74c3c; }
+
+        /* Chart Container */
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+            height: 350px;
+        }
+
+        /* Activity Card */
+        .activity-card {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 20px 25px;
+            border-bottom: 1px solid #eee;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .card-header i {
+            color: #667eea;
+        }
+
+        .card-body {
+            padding: 0;
+        }
+
+        .list-item {
+            padding: 15px 25px;
+            border-bottom: 1px solid #f5f5f5;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            transition: 0.3s;
+        }
+
+        .list-item:hover {
+            background: #f8f9fa;
+        }
+
+        .list-item:last-child {
+            border-bottom: none;
+        }
+
+        .list-item-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: #f0f2f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #667eea;
+        }
+
+        .list-item-content {
+            flex: 1;
+        }
+
+        .list-item-title {
+            font-weight: 600;
+            margin-bottom: 3px;
+        }
+
+        .list-item-subtitle {
+            font-size: 0.9rem;
+            color: #7f8c8d;
+        }
+
+        .list-item-time {
+            font-size: 0.8rem;
+            color: #95a5a6;
+        }
+
+        /* Quick Actions */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            padding: 20px;
+        }
+
+        .quick-action-btn {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px 10px;
+            text-align: center;
+            color: #2c3e50;
+            text-decoration: none;
+            transition: 0.3s;
+        }
+
+        .quick-action-btn:hover {
+            background: #667eea;
+            color: white;
+            transform: translateY(-3px);
+        }
+
+        .quick-action-btn i {
+            font-size: 1.8rem;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .quick-action-btn span {
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        /* Notifications */
+        .notification-item {
+            padding: 15px 25px;
+            border-bottom: 1px solid #f5f5f5;
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            transition: 0.3s;
+        }
+
+        .notification-item:hover {
+            background: #f8f9fa;
+        }
+
+        .notification-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .notification-icon.quiz_review { background: #f39c12; }
+        .notification-icon.new_user { background: #2ecc71; }
+        .notification-icon.attempt { background: #3498db; }
+        .notification-icon.draft { background: #95a5a6; }
+
+        .notification-content {
+            flex: 1;
+        }
+
+        .notification-message {
+            font-weight: 500;
+            margin-bottom: 3px;
+            font-size: 0.95rem;
+        }
+
+        .notification-time {
+            font-size: 0.8rem;
+            color: #95a5a6;
+        }
+
+        /* Mobile Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                left: -280px;
+            }
+            
+            .sidebar.show {
+                left: 0;
+            }
+            
+            .main-content {
+                margin-left: 0;
+                padding: 15px;
+            }
+            
+            .top-navbar {
+                display: flex;
+            }
+            
+            .stat-card {
+                margin-bottom: 15px;
+            }
+        }
+
+        /* Progress Bar */
+        .progress {
+            background: #f0f2f5;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            transition: width 0.6s ease;
+        }
+
+        /* Badges */
+        .badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+
+        /* Animations */
+        .animate-slide-in {
+            animation: slideIn 0.5s ease;
+        }
+
+        /* Opacity Utilities */
+        .opacity-50 {
+            opacity: 0.5;
+        }
+    </style>
 </head>
 <body>
 
@@ -186,7 +611,7 @@ try {
 <div class="sidebar" id="sidebar">
     <div class="sidebar-header">
         <h4><i class="fas fa-graduation-cap me-2"></i>EduQuiz</h4>
-        <small><?= $dashboardTitle ?></small>
+        <small><?= htmlspecialchars($dashboardTitle) ?></small>
     </div>
 
     <a href="dashboard.php" class="nav-link active">
@@ -235,11 +660,11 @@ try {
         <span class="menu-btn" onclick="toggleSidebar()">
             <i class="fas fa-bars"></i>
         </span>
-        <span class="fw-bold"><?= $dashboardTitle ?></span>
+        <span class="fw-bold"><?= htmlspecialchars($dashboardTitle) ?></span>
         <div class="d-flex align-items-center">
-            <span class="badge badge-primary me-3">
+            <span class="badge bg-primary me-3">
                 <i class="fas fa-user-circle me-1"></i>
-                <?= ucfirst($userRole) ?>
+                <?= ucfirst(htmlspecialchars($userRole)) ?>
             </span>
         </div>
     </div>
@@ -272,7 +697,7 @@ try {
                 <div class="stat-label">Total Users</div>
                 <div class="stat-trend up">
                     <i class="fas fa-arrow-up"></i>
-                    <?= round(($newUsers / $totalUsers) * 100) ?>% this month
+                    <?= $totalUsers > 0 ? round(($newUsers / $totalUsers) * 100) : 0 ?>% this month
                 </div>
             </div>
         </div>
@@ -388,7 +813,7 @@ try {
 
             <!-- Recent Activity -->
             <?php if ($userRole === 'teacher' && !empty($recentAttempts)): ?>
-            <div class="activity-card">
+            <div class="activity-card mt-4">
                 <div class="card-header">
                     <i class="fas fa-history"></i> Recent Quiz Attempts
                 </div>
@@ -429,7 +854,9 @@ try {
                             <div class="list-item-title"><?= htmlspecialchars($quiz['title']) ?></div>
                             <div class="list-item-subtitle">
                                 By <?= htmlspecialchars($quiz['creator_name']) ?> • 
-                                <span class="badge badge-<?= $quiz['status'] ?>"><?= ucfirst($quiz['status']) ?></span>
+                                <span class="badge bg-<?= $quiz['status'] == 'published' ? 'success' : 'warning' ?>">
+                                    <?= ucfirst($quiz['status']) ?>
+                                </span>
                             </div>
                         </div>
                         <div class="list-item-time">
@@ -482,7 +909,7 @@ try {
                     <?php if (!empty($notifications)): ?>
                         <?php foreach ($notifications as $note): ?>
                         <div class="notification-item">
-                            <div class="notification-icon <?= $note['type'] ?>">
+                            <div class="notification-icon <?= htmlspecialchars($note['type']) ?>">
                                 <i class="fas fa-<?= 
                                     $note['type'] == 'quiz_review' ? 'file-alt' : 
                                     ($note['type'] == 'new_user' ? 'user-plus' : 
@@ -512,14 +939,14 @@ try {
                 <div class="card-header">
                     <i class="fas fa-trophy"></i> Top Performing Quizzes
                 </div>
-                <div class="card-body">
+                <div class="card-body p-3">
                     <?php foreach ($topQuizzes as $quiz): ?>
                     <div class="mb-3">
                         <div class="d-flex justify-content-between mb-1">
                             <span class="fw-bold"><?= htmlspecialchars($quiz['title']) ?></span>
                             <span class="text-muted"><?= $quiz['attempt_count'] ?> attempts</span>
                         </div>
-                        <div class="progress progress-sm">
+                        <div class="progress" style="height: 8px;">
                             <div class="progress-bar bg-success" style="width: <?= $quiz['avg_score'] ?>%"></div>
                         </div>
                         <small class="text-muted">Avg. Score: <?= round($quiz['avg_score']) ?>%</small>
@@ -577,6 +1004,7 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             plugins: {
                 legend: {
                     position: 'top',
@@ -608,6 +1036,7 @@ document.addEventListener('DOMContentLoaded', function() {
         },
         options: {
             responsive: true,
+            maintainAspectRatio: false,
             plugins: {
                 legend: {
                     display: false
@@ -622,16 +1051,10 @@ document.addEventListener('DOMContentLoaded', function() {
     <?php endif; ?>
 });
 
-// Add smooth hover effects
-document.querySelectorAll('.stat-card, .activity-card').forEach(card => {
-    card.addEventListener('mouseenter', function() {
-        this.style.transition = 'all 0.3s ease';
-    });
-});
 </script>
 
 <!-- Bootstrap JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 </body>
-</html>
+</html> 

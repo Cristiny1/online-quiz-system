@@ -5,7 +5,7 @@
         }
         body {
             font-family: Arial, sans-serif;
-            background-image: url("../../views/image/login_bg.jpg");
+            background-image: url("../views/image/login_bg.jpg");
             background-size: cover;
             background-position: center;
             min-height: 100vh;
@@ -39,7 +39,7 @@
         }
         label {
             display: block;
-            border-radius: 25px;
+            border-radius: 40px;
             margin-bottom: 8px;
             color: #555;
             font-weight: bold;
@@ -47,16 +47,16 @@
         input[type="username"],
         input[type="password"] {
             width: 100%;
-            padding: 12px;
+            padding: 5px;
             border: 1px solid #ddd;     
             font-size: 14px;
             transition: border-color 0.3s;
-            border-radius: 40px;
+            border-radius: 10px;
         }
         input[type="username"]:focus,
         input[type="password"]:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #020202;
             
         }
         button {
