@@ -1,0 +1,41 @@
+{
+    "version" : 2,
+    "framework": null,
+    "functions": {
+        "api/index.php": {
+            "runtime": "php8.0"
+        }
+    },
+    "routes": [
+        {
+            "src": "/build/(.*)",
+            "dest": "build/$1"
+        },
+        {
+            "src": "/(.*\\.(?:ico|jpg|jpeg|png|gif|svg|css|js))",
+            "dest": "public/$1"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "api/index.php"
+        }
+    ],
+    "outputDirectory": "public",
+    "evn": {
+        "APP_ENV": "production ",
+        "APP_DEBUG": "true",
+        "APP_URL": "http://localhost",
+        "APP_KEY": "base64:jCi3BnC+s0hL9sQaQ4jI8kW2J63wLuSm+BOryJSSMXM=",
+
+        "APP_ConFIG_CACHE": "/tmp/config.php",
+        "APP_EVENT_CACHE": "/tmp/events.php",
+        "APP_PACKAGE_CACHE": "/tmp/packages.php",
+        "APP_SERVICES_CACHE": "/tmp/services.php",
+        "VIEW_COMPILED_PATH": "/tmp/views.php",
+        "APP_ROUTE_CACHE": "/tmp",
+
+        "CACHE_DRIVER": "ARRAY",
+        "LOG_CHANNEL": "STDERR",
+        "SESSION_DRIVER": "COOKIE"
+    }
+}
