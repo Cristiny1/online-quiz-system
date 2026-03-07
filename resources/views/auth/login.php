@@ -1,43 +1,40 @@
 <?php
 session_start();
-require_once __DIR__ . '../../../../config/database.php'; // Make sure path is correct
+
+// Connect to PostgreSQL
+require_once __DIR__ . '/../../../config/database.php'; // Adjust path if needed
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Fixed: Don't assign boolean values directly
     $username = $_POST['username'] ?? '';
     $password = $_POST['password'] ?? '';
 
     try {
-        $stmt = $pdo->prepare("
-            SELECT id, username, password, role_id 
-            FROM users 
-            WHERE username = :username
-        ");
+        $stmt = $pdo->prepare("SELECT id, username, password_hash, role_id FROM users WHERE username = :username");
         $stmt->execute(['username' => $username]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($user && password_verify($password, $user['password'])) {
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['role_id'] = $user['role_id'];
+        if ($user) {
+            // Plain text password check
+            if ($password === $user['password_hash']) {
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['role_id'] = $user['role_id'];
 
-            // Redirect based on role_id
-            switch ($user['role_id']) {
-                case 1:
-                    header("Location: ../admin/dashboard.php");
-                    break;
-                case 2:
-                    header("Location: ../teacher/dashboard.php");
-                    break;
-                case 3:
-                    header("Location: ../student/dashboard.php");
-                    break;
-                default:
-                    $_SESSION['error'] = "Role not recognized!";
-                    header("Location: login.php");
-                    break;
+                switch ($user['role_id']) {
+                    case 1: header("Location: ../admin/dashboard.php"); break;
+                    case 2: header("Location: ../teacher/dashboard.php"); break;
+                    case 3: header("Location: ../student/dashboard.php"); break;
+                    default:
+                        $_SESSION['error'] = "Role not recognized!";
+                        header("Location: login.php");
+                        break;
+                }
+                exit();
+            } else {
+                $_SESSION['error'] = "Invalid username or password!";
+                header("Location: login.php");
+                exit();
             }
-            exit();
         } else {
             $_SESSION['error'] = "Invalid username or password!";
             header("Location: login.php");
