@@ -237,7 +237,7 @@ try {
     <?php endif; ?>
 
     <?php if ($userRole === 'admin'||'teacher'): ?>
-        <a href="create_quiz.php" class="nav-link">
+        <a href="create-quiz.php" class="nav-link">
             <i class="fas fa-plus-circle"></i> Create Quiz
         </a>
         <a href="myquizzes.php" class="nav-link">

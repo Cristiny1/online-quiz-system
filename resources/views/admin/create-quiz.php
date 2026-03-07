@@ -5,23 +5,25 @@ session_start();
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// For testing - set dummy session if not logged in (REMOVE THIS IN PRODUCTION)
+// Check if user is logged in
 if (!isset($_SESSION['user_id'])) {
-    // Temporary: Auto-login for testing
-    $_SESSION['user_id'] = 1;
-    $_SESSION['role'] = 'admin';
-    $_SESSION['username'] = 'testuser';
+    header('Location: login.php');
+    exit();
+}
+
+// Only teachers and admins can create quizzes
+if (!in_array($_SESSION['role'] ?? '', ['teacher', 'admin'])) {
+    $_SESSION['error'] = "Unauthorized access!";
+    header('Location: dashboard.php');
+    exit();
 }
 
-// Check if user is authenticated and has teacher or admin role
-if (!isset($_SESSION['user_id'])) {
-    header('Location: login.php');
-    exit();
-} elseif (!in_array($_SESSION['role'] ?? '', ['teacher', 'admin'])) {
-    $_SESSION['error'] = "Unauthorized access!";
-    header('Location: login.php');
-    exit();
-}
+// Database connection
+require_once 'config/database.php';
+
+$userId = $_SESSION['user_id'];
+$userRole = $_SESSION['role'] ?? '';
+$username = $_SESSION['username'] ?? 'User';
 
 // Handle form submission
 $message = '';
@@ -45,16 +47,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($quiz_duration <= 0) {
         $error = 'Please enter a valid duration.';
     } else {
-        // Success! In real application, save to database here
-        $message = 'Quiz created successfully!';
-        
-        // You can store the data to show it was received
-        $_SESSION['last_quiz'] = [
-            'title' => $quiz_title,
-            'description' => $quiz_description,
-            'duration' => $quiz_duration,
-            'passing_score' => $passing_score
-        ];
+        try {
+            // Insert quiz into database
+            $stmt = $pdo->prepare("
+                INSERT INTO quizzes (title, description, duration, passing_score, randomize_questions, show_results, allow_retake, creator_id, status) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft')
+            ");
+            $stmt->execute([
+                $quiz_title, 
+                $quiz_description, 
+                $quiz_duration, 
+                $passing_score, 
+                $randomize_questions, 
+                $show_results, 
+                $allow_retake, 
+                $userId
+            ]);
+            
+            $quizId = $pdo->lastInsertId();
+            $message = 'Quiz created successfully!';
+            
+            // Store in session for display
+            $_SESSION['last_quiz'] = [
+                'id' => $quizId,
+                'title' => $quiz_title,
+                'description' => $quiz_description,
+                'duration' => $quiz_duration,
+                'passing_score' => $passing_score
+            ];
+            
+        } catch (PDOException $e) {
+            $error = 'Database error: ' . $e->getMessage();
+            error_log("Quiz creation error: " . $e->getMessage());
+        }
     }
 }
 ?>
@@ -68,29 +93,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="css/dashboard.css">
     <style>
-        body {
-            background-color: #f8f9fa;
-        }
-        .navbar-brand {
-            font-weight: 600;
-        }
-        .card {
-            border-radius: 10px;
-            border: none;
-        }
-        .btn-success {
-            background-color: #28a745;
-            border-color: #28a745;
-        }
-        .btn-success:hover {
-            background-color: #218838;
-            border-color: #1e7e34;
-        }
-        .form-control:focus {
-            border-color: #28a745;
-            box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
-        }
         .required-field::after {
             content: " *";
             color: #dc3545;
@@ -98,9 +103,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </style>
 </head>
 <body>
-    <!-- Navigation Bar -->
+    <!-- Navigation Bar (same as dashboard) -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
-        <div class="container">
+        <div class="container-fluid">
             <a class="navbar-brand" href="dashboard.php">
                 <i class="fas fa-graduation-cap me-2"></i>Quiz System
             </a>
@@ -126,11 +131,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </li>
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown">
-                            <i class="fas fa-user me-1"></i><?= htmlspecialchars($_SESSION['username'] ?? 'User') ?>
+                            <i class="fas fa-user me-1"></i><?= htmlspecialchars($username) ?>
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end">
                             <li><a class="dropdown-item" href="profile.php"><i class="fas fa-id-card me-2"></i>Profile</a></li>
-                            <li><a class="dropdown-item" href="settings.php"><i class="fas fa-cog me-2"></i>Settings</a></li>
+                            <li><a class="dropdown-item" href="setting.php"><i class="fas fa-cog me-2"></i>Settings</a></li>
                             <li><hr class="dropdown-divider"></li>
                             <li><a class="dropdown-item text-danger" href="logout.php"><i class="fas fa-sign-out-alt me-2"></i>Logout</a></li>
                         </ul>
@@ -140,59 +145,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
     </nav>
 
-    <div class="container py-4">
-        <!-- Breadcrumb -->
-        <nav aria-label="breadcrumb" class="mb-4">
-            <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="dashboard.php" class="text-decoration-none">Dashboard</a></li>
-                <li class="breadcrumb-item"><a href="quizzes.php" class="text-decoration-none">Quizzes</a></li>
-                <li class="breadcrumb-item active" aria-current="page">Create Quiz</li>
-            </ol>
-        </nav>
-
-        <!-- Page Header -->
-        <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2 class="mb-0">
-                <i class="fas fa-plus-circle text-primary me-2"></i>
-                Create New Quiz
-            </h2>
-            <div>
-                <a href="quizzes.php" class="btn btn-outline-secondary">
-                    <i class="fas fa-times me-2"></i>Cancel
-                </a>
-            </div>
-        </div>
-
-        <!-- Alert Messages -->
-        <?php if ($message): ?>
-            <div class="alert alert-success alert-dismissible fade show" role="alert">
-                <i class="fas fa-check-circle me-2"></i>
-                <?= htmlspecialchars($message) ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        <?php endif; ?>
-        
-        <?php if ($error): ?>
-            <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                <i class="fas fa-exclamation-circle me-2"></i>
-                <?= htmlspecialchars($error) ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        <?php endif; ?>
-
-        <!-- Show last created quiz info (for demo) -->
-        <?php if (isset($_SESSION['last_quiz']) && !$message): ?>
-            <div class="alert alert-info alert-dismissible fade show" role="alert">
-                <i class="fas fa-info-circle me-2"></i>
-                <strong>Last created quiz:</strong> "<?= htmlspecialchars($_SESSION['last_quiz']['title']) ?>" 
-                (<?= $_SESSION['last_quiz']['duration'] ?> minutes)
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            </div>
-        <?php endif; ?>
-
-        <!-- Main Form Card -->
+    <div class="container-fluid py-4">
         <div class="row">
-            <div class="col-lg-8">
+            <div class="col-12">
+                <!-- Breadcrumb -->
+                <nav aria-label="breadcrumb" class="mb-4">
+                    <ol class="breadcrumb">
+                        <li class="breadcrumb-item"><a href="dashboard.php" class="text-decoration-none">Dashboard</a></li>
+                        <li class="breadcrumb-item"><a href="quizzes.php" class="text-decoration-none">Quizzes</a></li>
+                        <li class="breadcrumb-item active" aria-current="page">Create Quiz</li>
+                    </ol>
+                </nav>
+
+                <!-- Page Header -->
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h2 class="mb-0">
+                        <i class="fas fa-plus-circle text-primary me-2"></i>
+                        Create New Quiz
+                    </h2>
+                    <div>
+                        <a href="quizzes.php" class="btn btn-outline-secondary">
+                            <i class="fas fa-times me-2"></i>Cancel
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Alert Messages -->
+                <?php if ($message): ?>
+                    <div class="alert alert-success alert-dismissible fade show" role="alert">
+                        <i class="fas fa-check-circle me-2"></i>
+                        <?= htmlspecialchars($message) ?>
+                        <?php if (isset($_SESSION['last_quiz']['id'])): ?>
+                            <a href="add-questions.php?id=<?= $_SESSION['last_quiz']['id'] ?>" class="btn btn-sm btn-light ms-3">
+                                <i class="fas fa-plus"></i> Add Questions
+                            </a>
+                        <?php endif; ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                <?php endif; ?>
+                
+                <?php if ($error): ?>
+                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                        <i class="fas fa-exclamation-circle me-2"></i>
+                        <?= htmlspecialchars($error) ?>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                <?php endif; ?>
+
+                <!-- Main Form Card -->
                 <div class="card shadow">
                     <div class="card-header bg-white py-3">
                         <h5 class="card-title mb-0">
@@ -334,71 +334,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
             </div>
-            
-            <!-- Sidebar -->
-            <div class="col-lg-4">
-                <!-- Help Card -->
-                <div class="card shadow mb-4">
-                    <div class="card-header bg-white py-3">
-                        <h5 class="card-title mb-0">
-                            <i class="fas fa-lightbulb text-warning me-2"></i>
-                            Quick Tips
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <ul class="list-unstyled mb-0">
-                            <li class="mb-3">
-                                <i class="fas fa-check-circle text-success me-2"></i>
-                                <strong>Clear Title:</strong> Make it descriptive and easy to understand
-                            </li>
-                            <li class="mb-3">
-                                <i class="fas fa-check-circle text-success me-2"></i>
-                                <strong>Detailed Description:</strong> Include topics covered and instructions
-                            </li>
-                            <li class="mb-3">
-                                <i class="fas fa-check-circle text-success me-2"></i>
-                                <strong>Appropriate Duration:</strong> Consider number of questions and difficulty
-                            </li>
-                            <li class="mb-3">
-                                <i class="fas fa-check-circle text-success me-2"></i>
-                                <strong>Passing Score:</strong> Set realistic expectations (usually 60-70%)
-                            </li>
-                            <li>
-                                <i class="fas fa-check-circle text-success me-2"></i>
-                                <strong>Add Questions:</strong> You can add questions after creating the quiz
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <!-- Stats Card -->
-                <div class="card shadow">
-                    <div class="card-header bg-white py-3">
-                        <h5 class="card-title mb-0">
-                            <i class="fas fa-chart-bar text-info me-2"></i>
-                            Your Quiz Stats
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="text-center mb-3">
-                            <h3 class="mb-0">0</h3>
-                            <small class="text-muted">Total Quizzes Created</small>
-                        </div>
-                        <div class="text-center">
-                            <h3 class="mb-0">0</h3>
-                            <small class="text-muted">Active Quizzes</small>
-                        </div>
-                        <hr>
-                        <a href="quizzes.php" class="btn btn-outline-primary w-100">
-                            <i class="fas fa-list me-2"></i>View All Quizzes
-                        </a>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 
-    <!-- Bootstrap JS Bundle with Popper -->
+    <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     
     <!-- Form validation script -->
@@ -407,10 +346,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         (function() {
             'use strict';
             
-            // Fetch all forms that need validation
             var forms = document.querySelectorAll('.needs-validation');
             
-            // Loop over them and prevent submission
             Array.prototype.slice.call(forms).forEach(function(form) {
                 form.addEventListener('submit', function(event) {
                     if (!form.checkValidity()) {
@@ -431,19 +368,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 });
             }, 5000);
         })();
-        
-        // Log when page loads
-        console.log('Create Quiz page loaded successfully!');
     </script>
-    
-    <!-- Display form submission status -->
-    <?php if ($_SERVER['REQUEST_METHOD'] === 'POST'): ?>
-    <script>
-        console.log('Form submitted successfully!');
-        <?php if ($message): ?>
-        console.log('Quiz created: <?= htmlspecialchars(addslashes($quiz_title)) ?>');
-        <?php endif; ?>
-    </script>
-    <?php endif; ?>
 </body>
 </html>
