@@ -60,7 +60,7 @@ $difficulty = $_GET['difficulty'] ?? '';
 $category = $_GET['category'] ?? '';
 
 try {
-    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    //$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     
     // Base query
     $baseQuery = "
@@ -101,10 +101,10 @@ try {
     
     // Get total count
     $countQuery = "SELECT COUNT(DISTINCT q.id) as total $baseQuery $whereClause";
-    $stmt = $pdo->prepare($countQuery);
-    $stmt->execute($params);
-    $totalQuizzes = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
-    $totalPages = ceil($totalQuizzes / $perPage);
+    //$stmt = $pdo->prepare($countQuery);
+    //$stmt->execute($params);
+    //$totalQuizzes = $stmt->fetch(PDO::FETCH_ASSOC)['total'];
+    //$totalPages = ceil($totalQuizzes / $perPage);
     
     // Get paginated quizzes
     $query = "
@@ -119,17 +119,17 @@ try {
         LIMIT :limit OFFSET :offset
     ";
     
-    $stmt = $pdo->prepare($query);
+    //$stmt = $pdo->prepare($query);
     
     // Bind parameters
     foreach ($params as $key => $value) {
-        $stmt->bindValue(":$key", $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+       // $stmt->bindValue(":$key", $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
     }
-    $stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
-    $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+    //$stmt->bindValue(':limit', $perPage, PDO::PARAM_INT);
+    //$stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
     
-    $stmt->execute();
-    $quizzes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    //$stmt->execute();
+    //$quizzes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     
 } catch (PDOException $e) {
     error_log("Error fetching quizzes: " . $e->getMessage() . " in " . $e->getFile() . " on line " . $e->getLine());
@@ -138,7 +138,7 @@ try {
 
 // Get unique categories for filter
 try {
-    $categories = $pdo->query("SELECT DISTINCT category FROM quizzes WHERE category IS NOT NULL ORDER BY category")->fetchAll(PDO::FETCH_COLUMN);
+    //$categories = $pdo->query("SELECT DISTINCT category FROM quizzes WHERE category IS NOT NULL ORDER BY category")->fetchAll(PDO::FETCH_COLUMN);
 } catch (PDOException $e) {
     $categories = [];
 }
@@ -528,54 +528,6 @@ $pageTitle = "All Quizzes - " . ucfirst($userRole) . " Panel";
                     </tbody>
                 </table>
             </div>
-            
-            <!-- Pagination -->
-            <?php if ($totalPages > 1): ?>
-                <nav aria-label="Page navigation" class="p-3">
-                    <ul class="pagination justify-content-center mb-0">
-                        <li class="page-item <?= $page <= 1 ? 'disabled' : '' ?>">
-                            <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $page - 1])) ?>" 
-                               aria-label="Previous">
-                                <span aria-hidden="true">&laquo;</span>
-                            </a>
-                        </li>
-                        
-                        <?php
-                        $start = max(1, $page - 2);
-                        $end = min($totalPages, $page + 2);
-                        
-                        if ($start > 1) {
-                            echo '<li class="page-item"><a class="page-link" href="?' . http_build_query(array_merge($_GET, ['page' => 1])) . '">1</a></li>';
-                            if ($start > 2) {
-                                echo '<li class="page-item disabled"><span class="page-link">...</span></li>';
-                            }
-                        }
-                        
-                        for ($i = $start; $i <= $end; $i++): ?>
-                            <li class="page-item <?= $i === $page ? 'active' : '' ?>">
-                                <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $i])) ?>">
-                                    <?= $i ?>
-                                </a>
-                            </li>
-                        <?php endfor;
-                        
-                        if ($end < $totalPages) {
-                            if ($end < $totalPages - 1) {
-                                echo '<li class="page-item disabled"><span class="page-link">...</span></li>';
-                            }
-                            echo '<li class="page-item"><a class="page-link" href="?' . http_build_query(array_merge($_GET, ['page' => $totalPages])) . '">' . $totalPages . '</a></li>';
-                        }
-                        ?>
-                        
-                        <li class="page-item <?= $page >= $totalPages ? 'disabled' : '' ?>">
-                            <a class="page-link" href="?<?= http_build_query(array_merge($_GET, ['page' => $page + 1])) ?>" 
-                               aria-label="Next">
-                                <span aria-hidden="true">&raquo;</span>
-                            </a>
-                        </li>
-                    </ul>
-                </nav>
-            <?php endif; ?>
         </div>
 
         <!-- Summary Cards -->
