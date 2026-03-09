@@ -1,73 +1,4 @@
-<?php
-session_start();
 
-// Check if user is admin
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
-    header('Location: login.php');
-    exit();
-}
-
-require_once 'config/database.php';
-
-// Generate CSRF token
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
-$csrf_token = $_SESSION['csrf_token'];
-
-$message = '';
-$error = '';
-
-// Handle user actions
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'] ?? '')) {
-        $error = 'Invalid CSRF token.';
-    } else {
-        if (isset($_POST['delete_id'])) {
-            $user_id = (int)$_POST['delete_id'];
-            
-            // Prevent deleting own account
-            if ($user_id === (int)$_SESSION['user_id']) {
-                $error = 'You cannot delete your own account.';
-            } else {
-                try {
-                    $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
-                    $stmt->execute([$user_id]);
-                    $message = 'User deleted successfully.';
-                } catch (PDOException $e) {
-                    $error = 'Error deleting user: ' . $e->getMessage();
-                }
-            }
-        } elseif (isset($_POST['add_user'])) {
-            $username = trim($_POST['username'] ?? '');
-            $email = trim($_POST['email'] ?? '');
-            $password = $_POST['password'] ?? '';
-            $role = $_POST['role'] ?? 'student';
-            
-            if (empty($username) || empty($email) || empty($password)) {
-                $error = 'Please fill in all fields.';
-            } else {
-                try {
-                    $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-                    $stmt = $pdo->prepare("INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, ?)");
-                    $stmt->execute([$username, $email, $hashedPassword, $role]);
-                    $message = 'User added successfully.';
-                } catch (PDOException $e) {
-                    $error = 'Error adding user: ' . $e->getMessage();
-                }
-            }
-        }
-    }
-}
-
-// Fetch all users
-try {
-    $users = $pdo->query("SELECT id, username, email, role, created_at FROM users ORDER BY created_at DESC")->fetchAll();
-} catch (PDOException $e) {
-    $error = 'Error fetching users: ' . $e->getMessage();
-    $users = [];
-}
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -76,7 +7,7 @@ try {
     <title>User Management - Quiz System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="css/dashboard.css">
+
     <style>
         .user-table th {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
